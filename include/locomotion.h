@@ -4,31 +4,25 @@
 
 namespace spiritsaway::locomotion_sync
 {
-	enum class vec3_sync_flags : std::uint8_t
-	{
-		x_partial = 0,
-		x_full,
-		y_partial,
-		y_full,
-		z_partial,
-		z_full,
-		max
-	};
-	template <typename T>
-	class vec3_sync_data
+	template <typename T, std::uint8_t N>
+	class vec_sync_data
 	{
 		std::uint8_t flags = 0;
-		std::array<std::int8_t, 3 * sizeof(T)> data;
-		std::array<T, 3> sync_data;
+		std::array<std::int8_t, N * sizeof(T)> diff_buffer; // 用于存放diff或者full同步的数据
+		std::array<T, N> lastest_snapshot; // 用于存放最新的位置信息
 	public:
-		const std::uint8_t data_sz()const
+		vec_sync_data()
 		{
-			
+			static_assert(N <= 4);
+		}
+		std::uint8_t data_sz()const
+		{
+
 			std::uint8_t result = 1;
 			std::uint8_t remain_flag = flags;
 			while (remain_flag)
 			{
-				std::uint8_t test_flag =  remain_flag % 4;
+				std::uint8_t test_flag = remain_flag % 4;
 				remain_flag = remain_flag / 4;
 				if (test_flag == 0x3)
 				{
@@ -45,15 +39,17 @@ namespace spiritsaway::locomotion_sync
 		}
 		void to_big_endian(std::int8_t* data, std::uint32_t byte_num) const
 		{
-
+			(void)data;
+			(void)byte_num;
 		}
 		void from_big_endian(std::int8_t* data, std::uint32_t byte_num) const
 		{
-
+			(void)data;
+			(void)byte_num;
 		}
-		const std::array<T, 3>& internal_data() const
+		const std::array<T, N>& get_lastest_snapshot() const
 		{
-			return sync_data;
+			return lastest_snapshot;
 		}
 		template <typename D>
 		void encode_to_data(std::uint8_t i, int diff_v, std::uint8_t& data_fill_next, float scale)
@@ -62,9 +58,9 @@ namespace spiritsaway::locomotion_sync
 			D diff_v_d = D(diff_v);
 			std::int8_t* diff_v_d_ptr = reinterpret_cast<std::int8_t*>(&diff_v_d);
 			to_big_endian(diff_v_d_ptr, sizeof(D));
-			std::copy(diff_v_d_ptr, diff_v_d_ptr + sizeof(D), data.begin() + data_fill_next);
+			std::copy(diff_v_d_ptr, diff_v_d_ptr + sizeof(D), diff_buffer.begin() + data_fill_next);
 			data_fill_next += sizeof(D);
-			sync_data[i] += diff_v * scale;
+			lastest_snapshot[i] += diff_v * scale;
 		}
 
 		template <typename D>
@@ -72,7 +68,7 @@ namespace spiritsaway::locomotion_sync
 		{
 			D diff_v;
 			std::int8_t* diff_v_ptr = reinterpret_cast<std::int8_t*>(&diff_v);
-			std::copy(data.data() + next_data_idx, data.data() + next_data_idx + sizeof(D), diff_v_ptr);
+			std::copy(diff_buffer.data() + next_data_idx, diff_buffer.data() + next_data_idx + sizeof(D), diff_v_ptr);
 			from_big_endian(diff_v_ptr, sizeof(D));
 			T cur_diff = diff_v * scale;
 			dest[i] += cur_diff;
@@ -82,9 +78,9 @@ namespace spiritsaway::locomotion_sync
 		{
 			std::uint8_t data_fill_next = 0;
 			flags = 0;
-			for (int i = 0; i < 3; i++)
+			for (int i = 0; i < N; i++)
 			{
-				T old_v = sync_data[i];
+				T old_v = lastest_snapshot[i];
 				T new_v = new_data[i];
 				int diff_v = int((new_v - old_v) / scale);
 				if (diff_v > std::numeric_limits<std::int16_t>::max() || diff_v < std::numeric_limits<std::int16_t>::min())
@@ -93,9 +89,9 @@ namespace spiritsaway::locomotion_sync
 					flags |= (0x3 << (i * 2));
 					std::int8_t* new_v_ptr = reinterpret_cast<std::int8_t*>(&new_v);
 					to_big_endian(new_v_ptr, sizeof(T));
-					std::copy(new_v_ptr, new_v_ptr + sizeof(T), data.begin() + data_fill_next);
+					std::copy(new_v_ptr, new_v_ptr + sizeof(T), diff_buffer.begin() + data_fill_next);
 					data_fill_next += sizeof(T);
-					sync_data[i] = new_v;
+					lastest_snapshot[i] = new_v;
 				}
 				else if (diff_v > std::numeric_limits<std::int8_t>::max() || diff_v < std::numeric_limits<std::int8_t>::min())
 				{
@@ -108,27 +104,27 @@ namespace spiritsaway::locomotion_sync
 					encode_to_data<std::int8_t>(i, diff_v, data_fill_next, scale);
 				}
 				// 如果0 则不需要同步
-				
+
 			}
 		}
 		void full(const T* new_data)
 		{
 			flags = 0;
-			for (std::uint8_t i = 0; i < 3; i++)
+			for (std::uint8_t i = 0; i < N; i++)
 			{
 				T new_v = new_data[i];
 
 				flags |= (0x3 << (i * 2));
 				std::int8_t* new_v_ptr = reinterpret_cast<std::int8_t*>(&new_v);
 				to_big_endian(new_v_ptr, sizeof(T));
-				std::copy(new_v_ptr, new_v_ptr + sizeof(T), data.begin() + i * sizeof(T));
+				std::copy(new_v_ptr, new_v_ptr + sizeof(T), diff_buffer.begin() + i * sizeof(T));
 			}
-			std::copy(new_data, new_data + 3, sync_data.data());
+			std::copy(new_data, new_data + N, lastest_snapshot.data());
 		}
 		void replay(T* dest, T scale) const
 		{
 			std::uint8_t next_data_idx = 0;
-			for (std::uint8_t i = 0; i < 3; i++)
+			for (std::uint8_t i = 0; i < N; i++)
 			{
 				std::uint8_t cur_flag = (flags >> (i * 2)) & 0x3;
 				switch (cur_flag)
@@ -146,7 +142,7 @@ namespace spiritsaway::locomotion_sync
 				case 0x3:
 				{
 					std::int8_t* new_v_ptr = reinterpret_cast<std::int8_t*>(dest + i);
-					std::copy(data.data() + next_data_idx, data.data() + next_data_idx + sizeof(T), new_v_ptr);
+					std::copy(diff_buffer.data() + next_data_idx, diff_buffer.data() + next_data_idx + sizeof(T), new_v_ptr);
 					from_big_endian(new_v_ptr, sizeof(T));
 					next_data_idx += sizeof(T);
 					break;
@@ -161,7 +157,7 @@ namespace spiritsaway::locomotion_sync
 		{
 			buffer[0] = *reinterpret_cast<const std::int8_t*>(&flags);
 			auto cur_data_sz = data_sz();
-			std::copy(data.begin(), data.begin() + data_sz(), buffer + 1);
+			std::copy(diff_buffer.begin(), diff_buffer.begin() + data_sz(), buffer + 1);
 			return cur_data_sz + 1;
 		}
 		std::uint8_t decode(const std::int8_t* buffer, std::uint32_t remain_sz)
@@ -176,11 +172,13 @@ namespace spiritsaway::locomotion_sync
 			{
 				return 0;
 			}
-			std::copy(buffer + 1, buffer + 1 + cur_data_sz, data.begin());
+			std::copy(buffer + 1, buffer + 1 + cur_data_sz, diff_buffer.begin());
 			return cur_data_sz + 1;
 		}
 	};
 
-	using vec3_sync_double = vec3_sync_data<double>;
-	using vec3_sync_float = vec3_sync_data<float>;
+	using vec3_sync_double = vec_sync_data<double, 3>;
+	using vec3_sync_float = vec_sync_data<float, 3>;
+	using vec4_sync_double = vec_sync_data<double, 4>;
+	using vec4_sync_float = vec_sync_data<float, 4>;
 }

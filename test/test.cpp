@@ -12,8 +12,8 @@ void test_line(T max_accelerate, T max_speed, std::vector<basic_point<T>> corrid
 {
 	const T position_scale = 0.01;
 	const T speed_scale = 0.01;
-	vec3_sync_data<T> pos_sync_data;
-	vec3_sync_data<T> speed_sync_data;
+	vec_sync_data<T, 3> pos_sync_data;
+	vec_sync_data<T, 3> speed_sync_data;
 
 	std::uint32_t pos_sync_data_sz = 0;
 	std::uint32_t sync_raw_sz = 0;
