@@ -4,16 +4,25 @@
 #include <array>
 #include "point.h"
 #include <random>
+#include <cassert>
 using namespace spiritsaway::locomotion_sync;
 using namespace spiritsaway::geometry;
 
-template <typename T>
-void test_line(T max_accelerate, T max_speed, std::vector<basic_point<T>> corridor,  const T radius)
+template <typename T, int N>
+void sync_two_pos_sync(const vec_sync_data<T, N>& sender, vec_sync_data<T, N>& receiver)
 {
-	const T position_scale = 0.01;
-	const T speed_scale = 0.01;
-	vec_sync_data<T, 3> pos_sync_data;
-	vec_sync_data<T, 3> speed_sync_data;
+	std::array<std::int8_t, 128> buffer;
+	auto encode_sz = sender.encode(buffer.data());
+	auto remain_sz = receiver.decode(buffer.data(), encode_sz);
+	assert(remain_sz == encode_sz);
+}
+template <typename T>
+void test_line(T max_accelerate, T max_speed, std::vector<basic_point<T>> corridor,  const T radius, const T position_scale, const T speed_scale)
+{
+	vec_sync_data<T, 3> pos_sync_data_sender(position_scale);
+	vec_sync_data<T, 3> pos_sync_data_receiver(position_scale);
+	vec_sync_data<T, 3> speed_sync_data_sender(speed_scale);
+	vec_sync_data<T, 3>	speed_sync_data_receiver(speed_scale);
 
 	std::uint32_t pos_sync_data_sz = 0;
 	std::uint32_t sync_raw_sz = 0;
@@ -25,12 +34,15 @@ void test_line(T max_accelerate, T max_speed, std::vector<basic_point<T>> corrid
 	basic_point<T> sync_speed;
 	
 	std::uint32_t dest_idx = 1;
-	pos_sync_data.full(pos.data);
-	pos_sync_data.replay(sync_pos.data, position_scale);
-	pos_sync_data_sz += pos_sync_data.data_sz();
-	speed_sync_data.full(pre_speed.data);
-	speed_sync_data.replay(sync_speed.data, speed_scale);
-	speed_sync_data_sz += speed_sync_data.data_sz();
+	pos_sync_data_sender.full(pos.data);
+	sync_two_pos_sync(pos_sync_data_sender, pos_sync_data_receiver);
+	sync_pos = pos_sync_data_receiver.latest_snapshot();
+
+	pos_sync_data_sz += pos_sync_data_sender.diff_buffer_sz();
+	speed_sync_data_sender.full(pre_speed.data);
+	sync_two_pos_sync(speed_sync_data_sender, speed_sync_data_receiver);
+	sync_speed = speed_sync_data_receiver.latest_snapshot();
+	speed_sync_data_sz += speed_sync_data_sender.diff_buffer_sz();
 	T dt = 0.1f;
 	sync_raw_sz = sizeof(T) * 3;
 	int i = 0;
@@ -53,12 +65,14 @@ void test_line(T max_accelerate, T max_speed, std::vector<basic_point<T>> corrid
 		}
 		basic_point<T> new_pos = pos + new_speed * dt;
 
-		speed_sync_data.diff(new_speed.data, speed_scale);
-		speed_sync_data.replay(sync_speed.data, speed_scale);
-		speed_sync_data_sz += speed_sync_data.data_sz();
-		pos_sync_data.diff(new_pos.data, position_scale);
-		pos_sync_data_sz += pos_sync_data.data_sz();
-		pos_sync_data.replay(sync_pos.data, position_scale);
+		speed_sync_data_sender.diff(new_speed.data);
+		sync_two_pos_sync(speed_sync_data_sender, speed_sync_data_receiver);
+		sync_speed = speed_sync_data_receiver.latest_snapshot();
+		speed_sync_data_sz += speed_sync_data_sender.diff_buffer_sz() + 1;
+		pos_sync_data_sender.diff(new_pos.data);
+		sync_two_pos_sync(pos_sync_data_sender, pos_sync_data_receiver);
+		pos_sync_data_sz += pos_sync_data_sender.diff_buffer_sz() + 1;
+		sync_pos = pos_sync_data_receiver.latest_snapshot();
 		sync_raw_sz += sizeof(T) * 3;
 		
 		auto speed_dis = sync_speed.distance(new_speed);
@@ -88,9 +102,8 @@ void test_line(T max_accelerate, T max_speed, std::vector<basic_point<T>> corrid
 	
 
 }
-
 template <typename T>
-void test(int scale)
+std::vector<basic_point<T>> create_corridor_for_cube()
 {
 	std::vector<basic_point<T>> corridor;
 	std::array<basic_point<T>, 8> cube;
@@ -104,21 +117,37 @@ void test(int scale)
 	cube[7] = basic_point<T>(-1, -1, 1);
 	for (int i = 0; i < 8; i++)
 	{
-		cube[i] *= 100 * scale;
+		cube[i] *= 100;
 	}
 	for (int j = 0; j < 13; j++)
 	{
 		corridor.push_back(cube[(j * 47) % 8]);
 	}
-	T max_speed = 4 * scale;
-	T max_accelerate = 2 * scale;
-	T radius = 2 * scale;
-	test_line<T>(max_accelerate, max_speed, corridor, radius);
+	return corridor;
+}
+
+template <typename T>
+std::vector<basic_point<T>> create_corridor_for_line()
+{
+	std::vector<basic_point<T>> corridor;
+	corridor.push_back(basic_point<T>(-100, -100, -100));
+	corridor.push_back(basic_point<T>(100, 100, 100));
+	return corridor;
+}
+template <typename T>
+void test(T max_speed, T max_accelerate, T radius)
+{
+	test_line<T>(max_accelerate, max_speed, create_corridor_for_line<T>(), radius, 0.01, 0.01);
 }
 int main()
 {
+
 	std::cout << "test float" << std::endl;
-	test<float>(2);
+	test<float>(10, 4, 1);
+	test<float>(10, 2, 1);
+	test<float>(5, 2, 1);
 	std::cout << "test double" << std::endl;
-	test<double>(100);
+	test<double>(10, 4, 1);
+	test<double>(10, 2, 1);
+	test<double>(5, 2, 1);
 }

@@ -18,7 +18,7 @@ namespace spiritsaway::geometry
 				T y;
 				T z;
 			};
-			T data[3];
+			std::array<T,3> data;
 		};
 		
 		basic_point() :x(0), y(0), z(0)
@@ -41,6 +41,13 @@ namespace spiritsaway::geometry
 			x = other.x;
 			y = other.y;
 			z = other.z;
+			return *this;
+		}
+		basic_point& operator =(const std::array<T, 3>& other)
+		{
+			x = other[0];
+			y = other[1];
+			z = other[2];
 			return *this;
 		}
 		friend basic_point operator*(const basic_point& p, double s)
@@ -222,10 +229,6 @@ namespace spiritsaway::geometry
 		static T cross2d(const basic_point& a, const basic_point& b)
 		{
 			return a.z * b.x - a.x * b.z;
-		}
-		const T* get_data() const
-		{
-			return data;
 		}
 		void clear()
 		{
